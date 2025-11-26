@@ -2,13 +2,28 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
+    <!-- Viewport Settings untuk iPhone Poni/Safe Area -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>DompetKu - Wallet</title>
 
-    <!-- React & ReactDOM -->
+    <!-- PWA Settings (Agar bisa diinstall & Offline) -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#1e2545" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="https://img.icons8.com/fluency/192/wallet.png"
+    />
+
+    <title>DompetKu</title>
+
+    <!-- Libraries (Wajib sama dengan daftar di sw.js) -->
     <script
       crossorigin
       src="https://unpkg.com/react@18/umd/react.production.min.js"
@@ -17,19 +32,11 @@
       crossorigin
       src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
     ></script>
-
-    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-
-    <!-- Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
@@ -53,7 +60,7 @@
         scrollbar-width: none;
       }
 
-      /* Custom Colors based on image */
+      /* Custom Colors */
       .bg-dark-navy {
         background-color: #1e2545;
       }
@@ -61,7 +68,7 @@
         color: #1e2545;
       }
 
-      /* Safe Area Utilities */
+      /* Safe Area Utilities (Agar tidak tertutup poni/garis home) */
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom, 20px);
       }
@@ -79,11 +86,22 @@
     ></div>
 
     <script type="text/babel">
-      // --- KONFIGURASI FIREBASE ---
+      // --- 1. REGISTRASI SERVICE WORKER (UNTUK MODE OFFLINE) ---
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("./sw.js")
+            .then((reg) => console.log("Service Worker Registered"))
+            .catch((err) => console.log("Service Worker Failed", err));
+        });
+      }
+
+      // --- 2. KONFIGURASI FIREBASE ---
       const firebaseConfig =
         typeof __firebase_config !== "undefined"
           ? JSON.parse(__firebase_config)
           : {
+              // TEMPEL CONFIG FIREBASE ANDA DISINI
               apiKey: "AIzaSyAagt3TSKoIutrmzHE-rbuH6S3IjlTOzak",
               authDomain: "uangku-96c90.firebaseapp.com",
               projectId: "uangku-96c90",
@@ -92,17 +110,30 @@
               appId: "1:1082461445560:web:c14d67a85929674e9bc34d",
             };
 
+      // Initialize Firebase & Offline Persistence
       if (!firebase.apps.length) {
         firebase.initializeApp(firebaseConfig);
+
+        // AKTIFKAN DATABASE OFFLINE
+        firebase
+          .firestore()
+          .enablePersistence()
+          .catch((err) => {
+            if (err.code == "failed-precondition") {
+              console.log("Persistence failed: Multiple tabs open");
+            } else if (err.code == "unimplemented") {
+              console.log("Persistence is not available in this browser");
+            }
+          });
       }
+
       const db = firebase.firestore();
       const auth = firebase.auth();
-      const APP_ID_STORAGE =
-        typeof __app_id !== "undefined" ? __app_id : "dompetku-v3";
+      const APP_ID_STORAGE = "dompetku-offline-final";
 
       const { useState, useEffect, useMemo, useRef } = React;
 
-      // Icon Component Safe for React + Lucide
+      // Komponen Icon yang aman (Anti Crash React + Lucide)
       const Icon = ({
         name,
         size = 24,
@@ -130,30 +161,32 @@
         const [transactions, setTransactions] = useState([]);
         const [loading, setLoading] = useState(true);
         const [view, setView] = useState("login");
+        const [isOnline, setIsOnline] = useState(navigator.onLine);
 
+        // Form Data
         const [amount, setAmount] = useState("");
         const [desc, setDesc] = useState("");
         const [type, setType] = useState("expense");
         const [isSubmitting, setIsSubmitting] = useState(false);
 
+        // Cek Status Koneksi Internet
         useEffect(() => {
-          const initAuth = async () => {
-            if (
-              typeof __initial_auth_token !== "undefined" &&
-              __initial_auth_token
-            ) {
-              try {
-                await auth.signInWithCustomToken(__initial_auth_token);
-              } catch (e) {
-                console.error(e);
-              }
-            }
+          const handleStatusChange = () => setIsOnline(navigator.onLine);
+          window.addEventListener("online", handleStatusChange);
+          window.addEventListener("offline", handleStatusChange);
+          return () => {
+            window.removeEventListener("online", handleStatusChange);
+            window.removeEventListener("offline", handleStatusChange);
           };
-          initAuth();
+        }, []);
+
+        // Auth Listener
+        useEffect(() => {
           const unsubscribe = auth.onAuthStateChanged((u) => {
             setUser(u);
-            if (u) setView("home");
-            else {
+            if (u) {
+              setView("home");
+            } else {
               setView("login");
               setLoading(false);
             }
@@ -161,38 +194,57 @@
           return () => unsubscribe();
         }, []);
 
+        // Login Google
         const handleLogin = async () => {
+          if (!isOnline) {
+            alert("Koneksi internet diperlukan untuk Login pertama kali.");
+            return;
+          }
           try {
             const provider = new firebase.auth.GoogleAuthProvider();
             await auth.signInWithPopup(provider);
           } catch (error) {
             console.error(error);
-            alert("Login Google gagal. Masuk sebagai tamu.");
-            await auth.signInAnonymously();
+            alert("Login Gagal: " + error.message);
           }
         };
 
+        // Fetch Data (Support Offline Cache)
         useEffect(() => {
           if (!user) return;
           setLoading(true);
+
           const collectionRef = db
             .collection("artifacts")
             .doc(APP_ID_STORAGE)
             .collection("users")
             .doc(user.uid)
             .collection("transactions");
-          const unsubscribe = collectionRef.onSnapshot((snapshot) => {
-            const data = snapshot.docs.map((doc) => ({
-              id: doc.id,
-              ...doc.data(),
-            }));
-            data.sort((a, b) => b.createdAt - a.createdAt);
-            setTransactions(data);
-            setLoading(false);
-          });
+
+          // Listener ini pintar: kalau offline, dia ambil dari cache HP
+          const unsubscribe = collectionRef.onSnapshot(
+            (snapshot) => {
+              const data = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+                // Cek apakah data ini masih tertunda (belum terkirim ke server)
+                pending: doc.metadata.hasPendingWrites,
+              }));
+              data.sort((a, b) => b.createdAt - a.createdAt);
+              setTransactions(data);
+              setLoading(false);
+            },
+            (error) => {
+              // Jangan set error jika hanya masalah offline
+              console.log("Status update:", error);
+              setLoading(false);
+            }
+          );
+
           return () => unsubscribe();
         }, [user]);
 
+        // Hitung Saldo
         const summary = useMemo(() => {
           return transactions.reduce(
             (acc, curr) => {
@@ -218,24 +270,30 @@
           }).format(num);
         };
 
+        // Simpan Data
         const handleSubmit = async (e) => {
           e.preventDefault();
           if (!amount || !desc) return;
           setIsSubmitting(true);
+
           try {
-            await db
+            const collectionRef = db
               .collection("artifacts")
               .doc(APP_ID_STORAGE)
               .collection("users")
               .doc(user.uid)
-              .collection("transactions")
-              .add({
-                amount: parseFloat(amount),
-                description: desc,
-                type: type,
-                createdAt: Date.now(),
-                dateString: new Date().toLocaleDateString("id-ID"),
-              });
+              .collection("transactions");
+
+            // Saat offline, ini akan sukses disimpan di lokal dulu
+            // Saat online, otomatis sync ke cloud
+            await collectionRef.add({
+              amount: parseFloat(amount),
+              description: desc,
+              type: type,
+              createdAt: Date.now(),
+              dateString: new Date().toLocaleDateString("id-ID"),
+            });
+
             setAmount("");
             setDesc("");
             setView("home");
@@ -246,8 +304,9 @@
           }
         };
 
+        // Hapus Data
         const handleDelete = async (id) => {
-          if (!confirm("Hapus item ini?")) return;
+          if (!confirm("Hapus catatan ini?")) return;
           try {
             await db
               .collection("artifacts")
@@ -262,7 +321,7 @@
           }
         };
 
-        // VIEW: LOGIN
+        // --- VIEW: LOGIN SCREEN ---
         if (view === "login" && !loading) {
           return (
             <div className="flex flex-col items-center justify-center h-full bg-dark-navy text-white p-8">
@@ -271,8 +330,9 @@
               </div>
               <h1 className="text-3xl font-bold mb-2">DompetKu</h1>
               <p className="text-gray-300 mb-10 text-center">
-                Kelola keuangan Anda.
+                Kelola keuangan Anda (Bisa Offline).
               </p>
+
               <button
                 onClick={handleLogin}
                 className="flex items-center space-x-3 bg-white text-dark-navy px-8 py-3 rounded-full font-bold shadow-lg active:scale-95 transition-transform"
@@ -282,12 +342,13 @@
                   className="w-6 h-6"
                   alt="G"
                 />
-                <span>Login Google</span>
+                <span>Login dengan Google</span>
               </button>
             </div>
           );
         }
 
+        // --- VIEW: LOADING ---
         if (loading)
           return (
             <div className="flex items-center justify-center h-full bg-dark-navy">
@@ -295,31 +356,41 @@
             </div>
           );
 
-        // VIEW: HOME
+        // --- VIEW: HOME SCREEN ---
         return (
           <div className="flex flex-col h-full bg-slate-200">
-            {" "}
-            {/* Set background to match footer */}
-            {/* Header Section */}
+            {/* Header Biru */}
             <div className="bg-dark-navy text-white p-6 pt-safe pb-28 relative">
-              <div className="flex justify-between items-center mb-8 mt-2">
-                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center overflow-hidden border border-white/10">
-                  {user.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt="User"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <Icon name="user" size={20} />
+              <div className="flex justify-between items-center mb-6 mt-2">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center overflow-hidden border border-white/10">
+                    {user.photoURL ? (
+                      <img
+                        src={user.photoURL}
+                        alt="User"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Icon name="user" size={20} />
+                    )}
+                  </div>
+                  {/* Indikator Offline */}
+                  {!isOnline && (
+                    <span className="bg-red-500/80 text-[10px] px-2 py-1 rounded-full font-bold animate-pulse">
+                      OFFLINE
+                    </span>
                   )}
                 </div>
                 <h1 className="text-xl font-bold tracking-wide">Wallet</h1>
-                <div className="w-10 h-10 flex items-center justify-center">
-                  <Icon name="wallet" size={24} />
+                <div
+                  className="w-10 h-10 flex items-center justify-center cursor-pointer"
+                  onClick={() => auth.signOut()}
+                >
+                  <Icon name="log-out" size={20} className="opacity-70" />
                 </div>
               </div>
 
+              {/* Saldo Utama */}
               <div className="text-center mb-8">
                 <p className="text-gray-300 text-sm mb-1">Saldo Saat ini</p>
                 <h2 className="text-4xl font-bold tracking-tight">
@@ -327,10 +398,9 @@
                 </h2>
               </div>
 
-              {/* Stats Row */}
+              {/* Statistik */}
               <div className="grid grid-cols-2 gap-4 px-2">
                 <div className="flex items-center space-x-3">
-                  {/* Pemasukan Icon: CircleDollarSign */}
                   <div className="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
                     <Icon
                       name="circle-dollar-sign"
@@ -346,7 +416,6 @@
                   </div>
                 </div>
                 <div className="flex items-center space-x-3 justify-end sm:justify-start">
-                  {/* Pengeluaran Icon: LineChart */}
                   <div className="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
                     <Icon name="line-chart" size={24} className="text-white" />
                   </div>
@@ -359,7 +428,8 @@
                 </div>
               </div>
             </div>
-            {/* Transaction List Card */}
+
+            {/* Transaksi List */}
             <div className="flex-1 bg-white rounded-t-[35px] -mt-10 px-6 pt-8 pb-32 overflow-y-auto shadow-inner no-scrollbar relative z-10">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-gray-500 font-medium">Riwayat Transaksi</h3>
@@ -400,9 +470,19 @@
                           <p className="font-bold text-gray-800 text-base">
                             {t.description}
                           </p>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {t.dateString}
-                          </p>
+                          <div className="flex items-center space-x-2">
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {t.dateString}
+                            </p>
+                            {/* Ikon Awan Putus jika data belum sync (Pending) */}
+                            {t.pending && (
+                              <Icon
+                                name="cloud-off"
+                                size={12}
+                                className="text-orange-400"
+                              />
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center space-x-3">
@@ -428,8 +508,9 @@
                 </div>
               )}
             </div>
-            {/* Custom Grey Bottom Bar */}
-            <div className="fixed bottom-0 left-0 right-0 h-[80px] bg-slate-200 z-20 flex justify-center items-center pb-safe">
+
+            {/* Footer Abu-abu (Bottom Bar) */}
+            <div className="fixed bottom-0 left-0 right-0 h-[85px] bg-slate-200 z-20 flex justify-center items-center pb-safe border-t border-slate-300/50">
               <button
                 onClick={() => setView("add")}
                 className="bg-dark-navy text-white w-14 h-14 rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform"
@@ -437,7 +518,8 @@
                 <Icon name="plus" size={32} />
               </button>
             </div>
-            {/* Modal Add */}
+
+            {/* Modal Tambah Transaksi */}
             {view === "add" && (
               <div className="absolute inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center animate-fade-in backdrop-blur-sm">
                 <div className="bg-white w-full max-w-md p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl animate-slide-up mb-safe">
@@ -452,6 +534,7 @@
                       <Icon name="x" size={20} />
                     </button>
                   </div>
+
                   <form onSubmit={handleSubmit} className="space-y-5">
                     <div className="flex bg-gray-100 p-1 rounded-xl">
                       <button
@@ -477,6 +560,7 @@
                         Pemasukan
                       </button>
                     </div>
+
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase ml-1">
                         Deskripsi
@@ -490,6 +574,7 @@
                         className="w-full mt-2 p-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-slate-200 font-medium ios-input"
                       />
                     </div>
+
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase ml-1">
                         Nominal
@@ -503,6 +588,7 @@
                         className="w-full mt-2 p-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-slate-200 text-xl font-bold ios-input"
                       />
                     </div>
+
                     <button
                       type="submit"
                       disabled={isSubmitting}
