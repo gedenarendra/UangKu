@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>DompetKu - Wallet</title>
+
+    <!-- React & ReactDOM -->
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    ></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+      /* Base styles */
+      body {
+        -webkit-tap-highlight-color: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background-color: #f8fafc;
+      }
+      .ios-input {
+        font-size: 16px;
+      }
+
+      /* Hide scrollbar */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      /* Custom Colors based on image */
+      .bg-dark-navy {
+        background-color: #1e2545;
+      }
+      .text-dark-navy {
+        color: #1e2545;
+      }
+
+      /* Safe Area Utilities */
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom, 20px);
+      }
+      .pt-safe {
+        padding-top: env(safe-area-inset-top, 20px);
+      }
+    </style>
+  </head>
+  <body
+    class="bg-gray-100 h-[100dvh] w-screen flex justify-center overflow-hidden"
+  >
+    <div
+      id="root"
+      class="w-full max-w-md h-full bg-white shadow-2xl flex flex-col relative"
+    ></div>
+
+    <script type="text/babel">
+      // --- KONFIGURASI FIREBASE ---
+      const firebaseConfig =
+        typeof __firebase_config !== "undefined"
+          ? JSON.parse(__firebase_config)
+          : {
+              apiKey: "AIzaSyAagt3TSKoIutrmzHE-rbuH6S3IjlTOzak",
+              authDomain: "uangku-96c90.firebaseapp.com",
+              projectId: "uangku-96c90",
+              storageBucket: "uangku-96c90.firebasestorage.app",
+              messagingSenderId: "1082461445560",
+              appId: "1:1082461445560:web:c14d67a85929674e9bc34d",
+            };
+
+      if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+      }
+      const db = firebase.firestore();
+      const auth = firebase.auth();
+      const APP_ID_STORAGE =
+        typeof __app_id !== "undefined" ? __app_id : "dompetku-v3";
+
+      const { useState, useEffect, useMemo, useRef } = React;
+
+      // Icon Component Safe for React + Lucide
+      const Icon = ({
+        name,
+        size = 24,
+        color = "currentColor",
+        className = "",
+      }) => {
+        const elementRef = useRef(null);
+        useEffect(() => {
+          if (elementRef.current && window.lucide) {
+            const classAttr = className ? `class="${className}"` : "";
+            elementRef.current.innerHTML = `<i data-lucide="${name}" width="${size}" height="${size}" stroke="${color}" ${classAttr}></i>`;
+            window.lucide.createIcons({ root: elementRef.current });
+          }
+        }, [name, size, color, className]);
+        return (
+          <span
+            ref={elementRef}
+            className="inline-flex items-center justify-center"
+          ></span>
+        );
+      };
+
+      const App = () => {
+        const [user, setUser] = useState(null);
+        const [transactions, setTransactions] = useState([]);
+        const [loading, setLoading] = useState(true);
+        const [view, setView] = useState("login");
+
+        const [amount, setAmount] = useState("");
+        const [desc, setDesc] = useState("");
+        const [type, setType] = useState("expense");
+        const [isSubmitting, setIsSubmitting] = useState(false);
+
+        useEffect(() => {
+          const initAuth = async () => {
+            if (
+              typeof __initial_auth_token !== "undefined" &&
+              __initial_auth_token
+            ) {
+              try {
+                await auth.signInWithCustomToken(__initial_auth_token);
+              } catch (e) {
+                console.error(e);
+              }
+            }
+          };
+          initAuth();
+          const unsubscribe = auth.onAuthStateChanged((u) => {
+            setUser(u);
+            if (u) setView("home");
+            else {
+              setView("login");
+              setLoading(false);
+            }
+          });
+          return () => unsubscribe();
+        }, []);
+
+        const handleLogin = async () => {
+          try {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            await auth.signInWithPopup(provider);
+          } catch (error) {
+            console.error(error);
+            alert("Login Google gagal. Masuk sebagai tamu.");
+            await auth.signInAnonymously();
+          }
+        };
+
+        useEffect(() => {
+          if (!user) return;
+          setLoading(true);
+          const collectionRef = db
+            .collection("artifacts")
+            .doc(APP_ID_STORAGE)
+            .collection("users")
+            .doc(user.uid)
+            .collection("transactions");
+          const unsubscribe = collectionRef.onSnapshot((snapshot) => {
+            const data = snapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data(),
+            }));
+            data.sort((a, b) => b.createdAt - a.createdAt);
+            setTransactions(data);
+            setLoading(false);
+          });
+          return () => unsubscribe();
+        }, [user]);
+
+        const summary = useMemo(() => {
+          return transactions.reduce(
+            (acc, curr) => {
+              const val = parseFloat(curr.amount);
+              if (curr.type === "income") {
+                acc.income += val;
+                acc.total += val;
+              } else {
+                acc.expense += val;
+                acc.total -= val;
+              }
+              return acc;
+            },
+            { income: 0, expense: 0, total: 0 }
+          );
+        }, [transactions]);
+
+        const formatRupiah = (num) => {
+          return new Intl.NumberFormat("id-ID", {
+            style: "currency",
+            currency: "IDR",
+            minimumFractionDigits: 0,
+          }).format(num);
+        };
+
+        const handleSubmit = async (e) => {
+          e.preventDefault();
+          if (!amount || !desc) return;
+          setIsSubmitting(true);
+          try {
+            await db
+              .collection("artifacts")
+              .doc(APP_ID_STORAGE)
+              .collection("users")
+              .doc(user.uid)
+              .collection("transactions")
+              .add({
+                amount: parseFloat(amount),
+                description: desc,
+                type: type,
+                createdAt: Date.now(),
+                dateString: new Date().toLocaleDateString("id-ID"),
+              });
+            setAmount("");
+            setDesc("");
+            setView("home");
+          } catch (error) {
+            alert("Gagal menyimpan: " + error.message);
+          } finally {
+            setIsSubmitting(false);
+          }
+        };
+
+        const handleDelete = async (id) => {
+          if (!confirm("Hapus item ini?")) return;
+          try {
+            await db
+              .collection("artifacts")
+              .doc(APP_ID_STORAGE)
+              .collection("users")
+              .doc(user.uid)
+              .collection("transactions")
+              .doc(id)
+              .delete();
+          } catch (e) {
+            console.error(e);
+          }
+        };
+
+        // VIEW: LOGIN
+        if (view === "login" && !loading) {
+          return (
+            <div className="flex flex-col items-center justify-center h-full bg-dark-navy text-white p-8">
+              <div className="bg-white/10 p-6 rounded-full mb-6">
+                <Icon name="wallet" size={64} className="text-white" />
+              </div>
+              <h1 className="text-3xl font-bold mb-2">DompetKu</h1>
+              <p className="text-gray-300 mb-10 text-center">
+                Kelola keuangan Anda.
+              </p>
+              <button
+                onClick={handleLogin}
+                className="flex items-center space-x-3 bg-white text-dark-navy px-8 py-3 rounded-full font-bold shadow-lg active:scale-95 transition-transform"
+              >
+                <img
+                  src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                  className="w-6 h-6"
+                  alt="G"
+                />
+                <span>Login Google</span>
+              </button>
+            </div>
+          );
+        }
+
+        if (loading)
+          return (
+            <div className="flex items-center justify-center h-full bg-dark-navy">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            </div>
+          );
+
+        // VIEW: HOME
+        return (
+          <div className="flex flex-col h-full bg-slate-200">
+            {" "}
+            {/* Set background to match footer */}
+            {/* Header Section */}
+            <div className="bg-dark-navy text-white p-6 pt-safe pb-28 relative">
+              <div className="flex justify-between items-center mb-8 mt-2">
+                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center overflow-hidden border border-white/10">
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt="User"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Icon name="user" size={20} />
+                  )}
+                </div>
+                <h1 className="text-xl font-bold tracking-wide">Wallet</h1>
+                <div className="w-10 h-10 flex items-center justify-center">
+                  <Icon name="wallet" size={24} />
+                </div>
+              </div>
+
+              <div className="text-center mb-8">
+                <p className="text-gray-300 text-sm mb-1">Saldo Saat ini</p>
+                <h2 className="text-4xl font-bold tracking-tight">
+                  {formatRupiah(summary.total)}
+                </h2>
+              </div>
+
+              {/* Stats Row */}
+              <div className="grid grid-cols-2 gap-4 px-2">
+                <div className="flex items-center space-x-3">
+                  {/* Pemasukan Icon: CircleDollarSign */}
+                  <div className="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
+                    <Icon
+                      name="circle-dollar-sign"
+                      size={24}
+                      className="text-white"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Pemasukan</p>
+                    <p className="font-semibold text-sm">
+                      {formatRupiah(summary.income)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3 justify-end sm:justify-start">
+                  {/* Pengeluaran Icon: LineChart */}
+                  <div className="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
+                    <Icon name="line-chart" size={24} className="text-white" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Pengeluaran</p>
+                    <p className="font-semibold text-sm">
+                      {formatRupiah(summary.expense)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* Transaction List Card */}
+            <div className="flex-1 bg-white rounded-t-[35px] -mt-10 px-6 pt-8 pb-32 overflow-y-auto shadow-inner no-scrollbar relative z-10">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-gray-500 font-medium">Riwayat Transaksi</h3>
+              </div>
+
+              {transactions.length === 0 ? (
+                <div className="text-center mt-10 opacity-40">
+                  <p>Belum ada transaksi</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {transactions.map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex justify-between items-center group"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div
+                          className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                            t.type === "income" ? "bg-green-100" : "bg-red-50"
+                          }`}
+                        >
+                          <Icon
+                            name={
+                              t.type === "income"
+                                ? "arrow-down"
+                                : "shopping-cart"
+                            }
+                            size={20}
+                            className={
+                              t.type === "income"
+                                ? "text-green-600"
+                                : "text-red-500"
+                            }
+                          />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-800 text-base">
+                            {t.description}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {t.dateString}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <span
+                          className={`font-bold ${
+                            t.type === "income"
+                              ? "text-green-600"
+                              : "text-red-500"
+                          }`}
+                        >
+                          {t.type === "income" ? "+" : "-"}
+                          {formatRupiah(t.amount)}
+                        </span>
+                        <button
+                          onClick={() => handleDelete(t.id)}
+                          className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Icon name="x" size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Custom Grey Bottom Bar */}
+            <div className="fixed bottom-0 left-0 right-0 h-[80px] bg-slate-200 z-20 flex justify-center items-center pb-safe">
+              <button
+                onClick={() => setView("add")}
+                className="bg-dark-navy text-white w-14 h-14 rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform"
+              >
+                <Icon name="plus" size={32} />
+              </button>
+            </div>
+            {/* Modal Add */}
+            {view === "add" && (
+              <div className="absolute inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center animate-fade-in backdrop-blur-sm">
+                <div className="bg-white w-full max-w-md p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl animate-slide-up mb-safe">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-dark-navy">
+                      Tambah Transaksi
+                    </h2>
+                    <button
+                      onClick={() => setView("home")}
+                      className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"
+                    >
+                      <Icon name="x" size={20} />
+                    </button>
+                  </div>
+                  <form onSubmit={handleSubmit} className="space-y-5">
+                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setType("expense")}
+                        className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
+                          type === "expense"
+                            ? "bg-white shadow text-red-600"
+                            : "text-gray-500"
+                        }`}
+                      >
+                        Pengeluaran
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setType("income")}
+                        className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
+                          type === "income"
+                            ? "bg-white shadow text-green-600"
+                            : "text-gray-500"
+                        }`}
+                      >
+                        Pemasukan
+                      </button>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase ml-1">
+                        Deskripsi
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Contoh: Bensin"
+                        value={desc}
+                        onChange={(e) => setDesc(e.target.value)}
+                        className="w-full mt-2 p-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-slate-200 font-medium ios-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase ml-1">
+                        Nominal
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        placeholder="0"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        className="w-full mt-2 p-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-slate-200 text-xl font-bold ios-input"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="w-full bg-dark-navy text-white py-4 rounded-2xl font-bold shadow-lg mt-2 active:scale-95 transition-transform"
+                    >
+                      {isSubmitting ? "Menyimpan..." : "Simpan"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
+</html>
